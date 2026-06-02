@@ -11,6 +11,7 @@ const FORUM_GRACE_MS = 3500;
 const FETCH_TIMEOUT_MS = 20000;
 const CACHE_KEY = "rodate:release-cache:v3";
 const THEME_KEY = "rodate:theme";
+const SEARCH_KEY = "rodate:search";
 const CACHE_VERSION = 3;
 const MAX_CACHED_DETAIL_RELEASES = 120;
 const MAX_CACHED_ROW_TEXT = 360;
@@ -110,6 +111,12 @@ function rodateApp() {
     olderDiscoveryRunning: false,
     timeframeMode: "year",
     timeframeOpen: false,
+    searchQuery: readStoredSearch(),
+    releaseVersion: 0,
+    orderedReleaseCache: {
+      key: "",
+      releases: [],
+    },
     tableOpen: {},
     releaseFocusPressTimer: 0,
     releaseFocusHoldCompleted: false,
@@ -636,11 +643,13 @@ function rodateApp() {
         ...patch,
         number,
       };
+      next.searchText = buildReleaseSearchText(next, this.locale);
 
       this.releasesByNumber = {
         ...this.releasesByNumber,
         [number]: next,
       };
+      this.releaseVersion += 1;
 
       if (!this.releaseOrder.includes(number)) {
         this.releaseOrder = [...this.releaseOrder, number].sort(
@@ -671,9 +680,86 @@ function rodateApp() {
     },
 
     orderedReleases() {
-      return this.allReleases().filter((release) =>
-        this.releaseInTimeframe(release),
-      );
+      const normalizedQuery = this.normalizedSearchQuery();
+      const cacheKey = `${this.releaseVersion}:${this.timeframeMode}:${normalizedQuery}`;
+      if (this.orderedReleaseCache.key === cacheKey) {
+        return this.orderedReleaseCache.releases;
+      }
+
+      const terms = this.searchTerms(normalizedQuery);
+      const releaseNumberQuery = this.searchReleaseNumberQuery(normalizedQuery);
+      const hasSearch = terms.length > 0;
+      const releases = this.allReleases().filter((release) => {
+        if (!hasSearch && !this.releaseInTimeframe(release)) return false;
+        return this.releaseMatchesSearch(release, terms, releaseNumberQuery);
+      });
+
+      this.orderedReleaseCache = {
+        key: cacheKey,
+        releases,
+      };
+      return releases;
+    },
+
+    normalizedSearchQuery() {
+      return normalizeSearchText(this.searchQuery);
+    },
+
+    searchTerms(normalizedQuery = this.normalizedSearchQuery()) {
+      return normalizedQuery.split(" ").filter(Boolean);
+    },
+
+    releaseMatchesSearch(
+      release,
+      terms = this.searchTerms(),
+      releaseNumberQuery = this.searchReleaseNumberQuery(),
+    ) {
+      if (
+        releaseNumberQuery &&
+        !String(release.number).includes(releaseNumberQuery)
+      ) {
+        return false;
+      }
+
+      if (!terms.length) return true;
+      const text = this.releaseSearchText(release);
+      return terms.every((term) => text.includes(term));
+    },
+
+    searchReleaseNumberQuery(normalizedQuery = this.normalizedSearchQuery()) {
+      const releaseMatch = normalizedQuery.match(/\brelease\s+(\d+)\b/);
+      if (releaseMatch) return releaseMatch[1];
+      if (/^\d+$/.test(normalizedQuery)) return normalizedQuery;
+      return "";
+    },
+
+    releaseSearchText(release) {
+      return release.searchText || buildReleaseSearchText(release, this.locale);
+    },
+
+    onSearchChange() {
+      writeStoredSearch(this.searchQuery);
+      if (
+        this.expandedReleaseNumber &&
+        !this.orderedReleases().some(
+          (release) => release.number === this.expandedReleaseNumber,
+        )
+      ) {
+        this.expandedReleaseNumber = null;
+      }
+      this.computeVirtualSoon();
+      this.renderChartsSoon();
+      this.$nextTick(() => {
+        if (this.$refs.historyViewport) {
+          this.$refs.historyViewport.scrollTop = 0;
+        }
+      });
+    },
+
+    clearSearch() {
+      if (!this.searchQuery) return;
+      this.searchQuery = "";
+      this.onSearchChange();
     },
 
     loadedReleases() {
@@ -834,7 +920,12 @@ function rodateApp() {
     },
 
     visibleReleaseScopeLabel() {
-      return `${this.loadedReleaseCount()} indexed / ${this.currentReleaseCount()} available (${this.timeframeCopyLabel()})`;
+      return `${this.loadedReleaseCount()} indexed / ${this.currentReleaseCount()} available (${this.releaseScopeCopyLabel()})`;
+    },
+
+    releaseScopeCopyLabel() {
+      if (this.searchTerms().length > 0) return "matching search";
+      return this.timeframeCopyLabel();
     },
 
     timeframeCopyLabel() {
@@ -1011,6 +1102,7 @@ function rodateApp() {
           pendingRows,
           unknownRows: items.length - liveRows - pendingRows,
         };
+        release.searchText = buildReleaseSearchText(release, this.locale);
 
         restored[number] = release;
         heights[heightKey(number, false)] = estimateReleaseHeight(
@@ -1029,6 +1121,8 @@ function rodateApp() {
 
       this.releasesByNumber = restored;
       this.releaseOrder = [...new Set(order)].sort((a, b) => b - a);
+      this.releaseVersion += 1;
+      this.orderedReleaseCache = { key: "", releases: [] };
       this.virtual.heights = { ...this.virtual.heights, ...heights };
       this.buildId = snapshot.buildId || this.buildId;
       this.source.docsLoaded = this.loadedReleaseCount();
@@ -1523,7 +1617,7 @@ function rodateApp() {
           grid: {
             left: 136,
             right: 58,
-            top: 16,
+            top: 4,
             bottom: 30,
           },
           tooltip: {
@@ -2155,6 +2249,7 @@ function emptyRelease(number) {
     liveRows: 0,
     pendingRows: 0,
     unknownRows: 0,
+    searchText: "",
   };
 }
 
@@ -2297,6 +2392,125 @@ function normalizeWhitespace(value) {
   return String(value || "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function readStoredSearch() {
+  try {
+    return localStorage.getItem(SEARCH_KEY) || "";
+  } catch (_error) {
+    return "";
+  }
+}
+
+function writeStoredSearch(value) {
+  try {
+    const query = String(value || "");
+    if (query) {
+      localStorage.setItem(SEARCH_KEY, query);
+    } else {
+      localStorage.removeItem(SEARCH_KEY);
+    }
+  } catch (_error) {
+    // Search still works for the current session if storage is unavailable.
+  }
+}
+
+function normalizeSearchText(value) {
+  return normalizeWhitespace(
+    normalizeWhitespace(value)
+    .toLowerCase()
+      .replace(/[_/.,:;()[\]{}'"`-]+/g, " "),
+  );
+}
+
+function stripHtmlText(value) {
+  const text = String(value || "");
+  if (!text) return "";
+  const doc = new DOMParser().parseFromString(text, "text/html");
+  return normalizeWhitespace(doc.body?.textContent || text);
+}
+
+function releaseDateSearchParts(value, locale) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return [];
+
+  const monthLong = new Intl.DateTimeFormat(locale, { month: "long" }).format(date);
+  const monthShort = new Intl.DateTimeFormat(locale, { month: "short" }).format(date);
+  const weekdayLong = new Intl.DateTimeFormat(locale, { weekday: "long" }).format(date);
+  const weekdayShort = new Intl.DateTimeFormat(locale, { weekday: "short" }).format(date);
+  const dateTime = new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+  const start = startOfLocalDay(date);
+  const today = startOfLocalDay(new Date());
+  const diffDays = Math.round((start - today) / 86400000);
+  const relative = new Intl.RelativeTimeFormat(locale, {
+    numeric: "auto",
+  }).format(diffDays, "day");
+
+  return [
+    dateTime,
+    relative,
+    monthLong,
+    monthShort,
+    weekdayLong,
+    weekdayShort,
+    String(date.getFullYear()),
+    String(date.getMonth() + 1),
+    String(date.getDate()),
+    monthKey(date),
+    dayKey(date),
+    `${date.getDate()} ${monthLong} ${date.getFullYear()}`,
+    `${monthLong} ${date.getFullYear()}`,
+    `${Math.abs(diffDays)} days ago`,
+    diffDays === 0 ? "today" : "",
+    diffDays === -1 ? "yesterday" : "",
+  ];
+}
+
+function buildReleaseSearchText(release, locale) {
+  const dateParts = release.createdAt
+    ? releaseDateSearchParts(release.createdAt, locale)
+    : ["date pending", "devforum date pending"];
+  const rows = release.items || [];
+  const rowText = rows
+    .flatMap((row) => [row.type, row.status, row.text])
+    .join(" ");
+  const totalRows = release.totalRows || 0;
+  const fixes = release.fixes?.length || 0;
+  const improvements = release.improvements?.length || 0;
+  const releaseStatus =
+    release.detailStatus === "failed"
+      ? "failed"
+      : release.detailStatus !== "loaded"
+        ? "loading"
+        : release.pendingRows > 0
+          ? `${release.pendingRows} pending`
+          : "all live";
+
+  return normalizeSearchText(
+    [
+      `release ${release.number}`,
+      `release-notes-${release.number}`,
+      `notes for release ${release.number}`,
+      releaseStatus,
+      `${totalRows} ${totalRows === 1 ? "change" : "changes"}`,
+      `${totalRows} changes`,
+      `${release.liveRows || 0} live`,
+      `${release.pendingRows || 0} pending`,
+      `${fixes} fixes`,
+      `${improvements} improvements`,
+      release.detailStatus,
+      release.error,
+      release.refreshError,
+      release.topicSlug,
+      release.forumUrl,
+      stripHtmlText(release.quote),
+      rowText,
+      ...dateParts,
+    ].join(" "),
+  );
 }
 
 function rowSignature(type, text) {

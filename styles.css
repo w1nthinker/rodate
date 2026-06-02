@@ -149,6 +149,69 @@ textarea {
   line-height: 1;
 }
 
+.top-search {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 28px;
+  width: clamp(210px, 22vw, 340px);
+  height: 46px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 6px 0 13px;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.top-search > i {
+  font-size: 0.96rem;
+}
+
+.top-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink-strong);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.top-search input::placeholder {
+  color: var(--muted);
+}
+
+.top-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.search-clear {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  transition:
+    background-color 180ms var(--ease-out),
+    color 180ms var(--ease-out),
+    transform 180ms var(--ease-out);
+}
+
+.search-clear:hover {
+  background: var(--canvas);
+  color: var(--ink-strong);
+}
+
+.search-clear:active {
+  transform: scale(0.94);
+}
+
 .app-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
@@ -356,9 +419,10 @@ kbd {
 .metric-card {
   display: grid;
   min-height: 260px;
+  grid-template-rows: 142px minmax(210px, 1fr);
   grid-template-columns: minmax(210px, 0.6fr) minmax(0, 1fr);
   gap: 18px;
-  align-items: center;
+  align-items: stretch;
   border-radius: 12px;
   padding: clamp(18px, 2.2vw, 28px);
 }
@@ -373,6 +437,9 @@ kbd {
 }
 
 .metric-copy {
+  display: grid;
+  align-content: start;
+  grid-template-rows: auto 6.15rem auto;
   min-width: 0;
 }
 
@@ -410,12 +477,14 @@ kbd {
 
 .chart-wide {
   width: 100%;
-  height: clamp(220px, 16vw, 280px);
+  height: 100%;
+  min-height: clamp(220px, 16vw, 280px);
 }
 
 .chart-square {
   width: 100%;
-  height: 210px;
+  height: 100%;
+  min-height: 210px;
 }
 
 .history-section {
@@ -1743,6 +1812,11 @@ kbd {
   .progress-control {
     width: auto;
     flex: 0 0 auto;
+  }
+
+  .top-search {
+    width: min(190px, calc(100vw - 184px));
+    min-width: 128px;
   }
 
   .app-header {
