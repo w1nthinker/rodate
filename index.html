@@ -1,0 +1,811 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="A live client-side history for Roblox Creator release notes."
+    />
+    <title>rodate</title>
+
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/daisyui@5"
+      rel="stylesheet"
+      type="text/css"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/bold/style.css"
+      rel="stylesheet"
+      type="text/css"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script>
+      (() => {
+        const mode = localStorage.getItem("rodate:theme") || "system";
+        const dark =
+          mode === "dark" ||
+          (mode === "system" &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches);
+        const resolved = dark ? "dark" : "light";
+        document.documentElement.dataset.rodateTheme = resolved;
+        document.documentElement.dataset.rodateThemeMode = mode;
+        document.documentElement.setAttribute("data-theme", resolved);
+      })();
+    </script>
+    <link rel="stylesheet" href="styles.css?v=20260602z" />
+
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script defer src="app.js?v=20260602z"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  </head>
+
+  <body
+    x-data="rodateApp()"
+    x-init="init()"
+    :class="{ 'calendar-is-open': calendarOpen }"
+  >
+    <div class="ambient-plane" aria-hidden="true"></div>
+
+    <div class="top-utility">
+      <div
+        class="progress-control"
+        x-show="progressVisible()"
+        x-transition:enter="td-panel-enter"
+        x-transition:enter-start="td-panel-enter-start"
+        x-transition:enter-end="td-panel-enter-end"
+        x-transition:leave="td-panel-leave"
+        x-transition:leave-start="td-panel-leave-start"
+        x-transition:leave-end="td-panel-leave-end"
+      >
+        <div
+          class="progress-button"
+          role="status"
+          aria-label="Loading progress"
+          title="Loading progress"
+        >
+          <span
+            class="mini-radial"
+            :style="`--progress: ${progressPercent()}%`"
+            aria-hidden="true"
+          >
+            <span x-text="progressPercent()"></span>
+          </span>
+        </div>
+      </div>
+
+      <div class="theme-toggle" role="group" aria-label="Theme">
+        <button
+          type="button"
+          class="theme-button"
+          :class="themeButtonClass('light')"
+          @click="setThemeMode('light')"
+          title="Bright theme"
+          aria-label="Bright theme"
+        >
+          <i class="ph-bold ph-sun" aria-hidden="true"></i>
+        </button>
+        <button
+          type="button"
+          class="theme-button"
+          :class="themeButtonClass('dark')"
+          @click="setThemeMode('dark')"
+          title="Dark theme"
+          aria-label="Dark theme"
+        >
+          <i class="ph-bold ph-moon" aria-hidden="true"></i>
+        </button>
+        <button
+          type="button"
+          class="theme-button"
+          :class="themeButtonClass('system')"
+          @click="setThemeMode('system')"
+          :title="systemThemeLabel()"
+          :aria-label="systemThemeLabel()"
+        >
+          <i class="ph-bold" :class="systemThemeIcon()" aria-hidden="true"></i>
+        </button>
+      </div>
+    </div>
+
+    <main class="app-shell">
+      <section class="overview-grid reveal" aria-label="Release overview">
+        <article class="metric-card metric-card-large">
+          <div class="metric-copy">
+            <span class="metric-label">Release coverage</span>
+            <strong x-text="loadedReleaseCount()"></strong>
+            <p>
+              <span x-text="visibleReleaseScopeLabel()"></span>
+            </p>
+          </div>
+          <div
+            id="release-overview-chart"
+            class="chart chart-wide"
+            role="img"
+            aria-label="Available releases, indexed details, and pending updates in the selected range"
+          ></div>
+        </article>
+
+        <article class="metric-card">
+          <div class="metric-copy">
+            <span class="metric-label">Changes</span>
+            <strong x-text="totalRowCount()"></strong>
+            <p>
+              <span x-text="`${liveRowCount()} live`"></span>
+              <span aria-hidden="true">/</span>
+              <span x-text="`${pendingRowCount()} pending`"></span>
+            </p>
+          </div>
+          <div
+            id="row-status-chart"
+            class="chart chart-square"
+            role="img"
+            aria-label="Live and pending release note changes"
+          ></div>
+        </article>
+      </section>
+
+      <section class="history-section reveal" aria-label="Virtual release history">
+        <div class="history-heading">
+          <div>
+            <p class="eyebrow">History</p>
+          </div>
+          <div class="history-meta">
+            <span x-text="`${currentReleaseCount()} releases`"></span>
+          </div>
+        </div>
+
+        <div
+          x-ref="historyViewport"
+          x-init="$nextTick(() => mountVirtual())"
+          x-effect="releaseOrder.length; timeframeMode; computeVirtualSoon()"
+          @scroll.passive="onHistoryScroll($event)"
+          class="history-frame"
+          tabindex="0"
+          aria-label="Scrollable virtualized release history"
+        >
+          <template x-if="currentReleaseCount() === 0 && !fatalError">
+            <div class="empty-state">
+              <div class="loading loading-spinner loading-md" aria-hidden="true"></div>
+              <p>Reading release index</p>
+            </div>
+          </template>
+
+          <div :style="`height: ${virtual.topPadding}px`" aria-hidden="true"></div>
+
+          <template x-for="release in mountedReleases()" :key="release.number">
+            <article
+              class="release-card"
+              :class="{
+                'is-highlighted': highlightRelease === release.number,
+                'is-collapsed': !releaseIsExpanded(release.number)
+              }"
+              :data-release-number="release.number"
+              x-init="$nextTick(() => afterCardMounted(release.number))"
+            >
+              <div
+                class="release-topline"
+                role="button"
+                tabindex="0"
+                @click="handleReleaseClick(release.number)"
+                @pointerdown="beginReleaseFocusHold(release.number)"
+                @pointerup="cancelReleaseFocusHold()"
+                @pointerleave="cancelReleaseFocusHold()"
+                @pointercancel="cancelReleaseFocusHold()"
+                @keydown.enter.prevent="toggleRelease(release.number)"
+                @keydown.space.prevent="toggleRelease(release.number)"
+                :aria-expanded="releaseIsExpanded(release.number)"
+              >
+                <div
+                  class="release-summary-button"
+                >
+                  <span class="release-summary-copy">
+                    <span class="release-kicker" x-text="dateLine(release)"></span>
+                    <span class="release-title-row">
+                      <span class="release-heading" x-text="`Release ${release.number}`"></span>
+                      <i
+                        class="ph-bold"
+                        :class="releaseIsExpanded(release.number) ? 'ph-caret-up' : 'ph-caret-down'"
+                        aria-hidden="true"
+                      ></i>
+                    </span>
+                  </span>
+                </div>
+
+                <div class="release-actions" @click.stop>
+                  <details class="share-menu">
+                    <summary
+                      class="share-trigger"
+                      title="Release actions"
+                      aria-label="Release actions"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                        focusable="false"
+                      >
+                        <path
+                          d="M8.75 12.25 15.25 8m-6.5 6.75 6.5 4.25M18 9.5a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm12 5.5a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="1.8"
+                        />
+                      </svg>
+                    </summary>
+                    <section
+                      class="share-popover"
+                      x-transition:enter="td-panel-enter"
+                      x-transition:enter-start="td-panel-enter-start"
+                      x-transition:enter-end="td-panel-enter-end"
+                      x-transition:leave="td-panel-leave"
+                      x-transition:leave-start="td-panel-leave-start"
+                      x-transition:leave-end="td-panel-leave-end"
+                      role="menu"
+                      aria-label="Release actions"
+                    >
+                      <button
+                        type="button"
+                        class="share-option"
+                        @click.stop="$el.closest('details').open = false; copyReleaseLink(release.number)"
+                        role="menuitem"
+                      >
+                        <i class="ph-bold ph-link" aria-hidden="true"></i>
+                        <span>Copy link</span>
+                      </button>
+                      <button
+                        type="button"
+                        class="share-option"
+                        @click.stop="$el.closest('details').open = false; openDocsRelease(release.number)"
+                        role="menuitem"
+                      >
+                        <i class="ph-bold ph-file-text" aria-hidden="true"></i>
+                        <span>Open release docs</span>
+                      </button>
+                      <button
+                        type="button"
+                        class="share-option"
+                        :disabled="!release.forumUrl"
+                        @click.stop="$el.closest('details').open = false; openForumPost(release)"
+                        role="menuitem"
+                      >
+                        <i class="ph-bold ph-chats-circle" aria-hidden="true"></i>
+                        <span>Open DevForum post</span>
+                      </button>
+                    </section>
+                  </details>
+                </div>
+
+                <div class="release-badges">
+                  <span
+                    class="status-badge"
+                    :class="releaseStatusClass(release)"
+                    x-text="releaseStatusLabel(release)"
+                  ></span>
+                  <span class="count-badge" x-text="releaseRowLabel(release)"></span>
+                </div>
+              </div>
+
+              <template x-if="releaseIsExpanded(release.number)">
+                <div
+                  class="release-details"
+                  x-transition:enter="td-panel-enter"
+                  x-transition:enter-start="td-panel-enter-start"
+                  x-transition:enter-end="td-panel-enter-end"
+                  x-transition:leave="td-panel-leave"
+                  x-transition:leave-start="td-panel-leave-start"
+                  x-transition:leave-end="td-panel-leave-end"
+                >
+                  <template x-if="release.quote">
+                    <section class="release-message">
+                      <div class="message-title">
+                        <button
+                          type="button"
+                          class="message-toggle table-toggle"
+                          @click="toggleTable(release.number, 'devforum')"
+                          :aria-expanded="tableIsOpen(release.number, 'devforum')"
+                        >
+                          <span>DevForum message</span>
+                          <i
+                            class="ph-bold"
+                            :class="tableIsOpen(release.number, 'devforum') ? 'ph-caret-up' : 'ph-caret-down'"
+                            aria-hidden="true"
+                          ></i>
+                        </button>
+                        <button
+                          type="button"
+                          class="message-link"
+                          x-show="release.forumUrl"
+                          @click="openForumPost(release)"
+                          title="Open full DevForum post"
+                          aria-label="Open full DevForum post"
+                        >
+                          <strong x-text="release.quoteStatus === 'excerpt' ? 'excerpt' : 'full post'"></strong>
+                          <i class="ph-bold ph-arrow-square-out" aria-hidden="true"></i>
+                        </button>
+                      </div>
+                      <div
+                        class="message-scroll"
+                        x-show="tableIsOpen(release.number, 'devforum')"
+                        x-transition:enter="td-table-enter"
+                        x-transition:enter-start="td-table-enter-start"
+                        x-transition:enter-end="td-table-enter-end"
+                        x-transition:leave="td-table-leave"
+                        x-transition:leave-start="td-table-leave-start"
+                        x-transition:leave-end="td-table-leave-end"
+                        x-html="release.quote"
+                      ></div>
+                    </section>
+                  </template>
+
+                  <template x-if="releaseIsLoading(release)">
+                    <div class="release-loading" aria-live="polite">
+                      <span class="skeleton-line skeleton-long"></span>
+                      <span class="skeleton-line"></span>
+                      <span class="skeleton-line skeleton-short"></span>
+                    </div>
+                  </template>
+
+                  <template x-if="release.detailStatus === 'failed'">
+                    <div class="inline-error">
+                      <i class="ph-bold ph-warning-circle" aria-hidden="true"></i>
+                      <span x-text="release.error || 'Release data failed to load.'"></span>
+                    </div>
+                  </template>
+
+                  <template x-if="release.detailStatus === 'loaded'">
+                    <div class="release-loaded">
+                      <div
+                        class="release-chart-grid"
+                        :class="{ 'single-chart': !showStatusChart(release) }"
+                      >
+                        <template x-if="showStatusChart(release)">
+                          <section>
+                            <button
+                              type="button"
+                              class="section-label chart-toggle"
+                              @click="toggleTable(release.number, 'status-chart')"
+                              :aria-expanded="tableIsOpen(release.number, 'status-chart')"
+                            >
+                              <span>Live / Pending</span>
+                              <i
+                                class="ph-bold"
+                                :class="tableIsOpen(release.number, 'status-chart') ? 'ph-caret-up' : 'ph-caret-down'"
+                                aria-hidden="true"
+                              ></i>
+                            </button>
+                            <div
+                              class="chart release-chart"
+                              x-show="tableIsOpen(release.number, 'status-chart')"
+                              x-transition:enter="td-table-enter"
+                              x-transition:enter-start="td-table-enter-start"
+                              x-transition:enter-end="td-table-enter-end"
+                              x-transition:leave="td-table-leave"
+                              x-transition:leave-start="td-table-leave-start"
+                              x-transition:leave-end="td-table-leave-end"
+                              :id="`release-status-chart-${release.number}`"
+                              @mouseleave="resetChartHoverState(release)"
+                              role="img"
+                              :aria-label="`Release ${release.number} live and pending status`"
+                            ></div>
+                          </section>
+                        </template>
+                        <section>
+                          <button
+                            type="button"
+                            class="section-label chart-toggle"
+                            @click="toggleTable(release.number, 'type-chart')"
+                            :aria-expanded="tableIsOpen(release.number, 'type-chart')"
+                          >
+                            <span>Fixes / Improvements</span>
+                            <i
+                              class="ph-bold"
+                              :class="tableIsOpen(release.number, 'type-chart') ? 'ph-caret-up' : 'ph-caret-down'"
+                              aria-hidden="true"
+                            ></i>
+                          </button>
+                          <div
+                            class="chart release-chart"
+                            x-show="tableIsOpen(release.number, 'type-chart')"
+                            x-transition:enter="td-table-enter"
+                            x-transition:enter-start="td-table-enter-start"
+                            x-transition:enter-end="td-table-enter-end"
+                            x-transition:leave="td-table-leave"
+                            x-transition:leave-start="td-table-leave-start"
+                            x-transition:leave-end="td-table-leave-end"
+                            :id="`release-type-chart-${release.number}`"
+                            @mouseleave="resetChartHoverState(release)"
+                            role="img"
+                            :aria-label="`Release ${release.number} fixes and improvements`"
+                          ></div>
+                        </section>
+                      </div>
+
+                      <div class="release-table-grid">
+                        <section class="release-table-panel">
+                          <button
+                            type="button"
+                            class="table-title table-toggle"
+                            @click="toggleTable(release.number, 'fixes')"
+                            :aria-expanded="tableIsOpen(release.number, 'fixes')"
+                          >
+                            <span>Fixes</span>
+                            <span class="table-count">
+                              <strong x-text="release.fixes.length"></strong>
+                              <i
+                                class="ph-bold"
+                                :class="tableIsOpen(release.number, 'fixes') ? 'ph-caret-up' : 'ph-caret-down'"
+                                aria-hidden="true"
+                              ></i>
+                            </span>
+                          </button>
+                          <div
+                            class="table-scroll"
+                            x-show="tableIsOpen(release.number, 'fixes')"
+                            x-transition:enter="td-table-enter"
+                            x-transition:enter-start="td-table-enter-start"
+                            x-transition:enter-end="td-table-enter-end"
+                            x-transition:leave="td-table-leave"
+                            x-transition:leave-start="td-table-leave-start"
+                            x-transition:leave-end="td-table-leave-end"
+                          >
+                            <table class="table release-table">
+                              <thead>
+                                <tr>
+                                  <th>Status</th>
+                                  <th>Description</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <template x-for="row in release.fixes" :key="row.key">
+                                  <tr>
+                                    <td>
+                                      <span
+                                        class="status-badge"
+                                        :class="statusClass(row.status)"
+                                        x-text="row.status"
+                                      ></span>
+                                    </td>
+                                    <td x-text="row.text"></td>
+                                  </tr>
+                                </template>
+                                <template x-if="release.fixes.length === 0">
+                                  <tr>
+                                    <td colspan="2" class="muted-cell">No fixes listed.</td>
+                                  </tr>
+                                </template>
+                              </tbody>
+                            </table>
+                          </div>
+                        </section>
+
+                        <section class="release-table-panel">
+                          <button
+                            type="button"
+                            class="table-title table-toggle"
+                            @click="toggleTable(release.number, 'improvements')"
+                            :aria-expanded="tableIsOpen(release.number, 'improvements')"
+                          >
+                            <span>Improvements</span>
+                            <span class="table-count">
+                              <strong x-text="release.improvements.length"></strong>
+                              <i
+                                class="ph-bold"
+                                :class="tableIsOpen(release.number, 'improvements') ? 'ph-caret-up' : 'ph-caret-down'"
+                                aria-hidden="true"
+                              ></i>
+                            </span>
+                          </button>
+                          <div
+                            class="table-scroll"
+                            x-show="tableIsOpen(release.number, 'improvements')"
+                            x-transition:enter="td-table-enter"
+                            x-transition:enter-start="td-table-enter-start"
+                            x-transition:enter-end="td-table-enter-end"
+                            x-transition:leave="td-table-leave"
+                            x-transition:leave-start="td-table-leave-start"
+                            x-transition:leave-end="td-table-leave-end"
+                          >
+                            <table class="table release-table">
+                              <thead>
+                                <tr>
+                                  <th>Status</th>
+                                  <th>Description</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <template x-for="row in release.improvements" :key="row.key">
+                                  <tr>
+                                    <td>
+                                      <span
+                                        class="status-badge"
+                                        :class="statusClass(row.status)"
+                                        x-text="row.status"
+                                      ></span>
+                                    </td>
+                                    <td x-text="row.text"></td>
+                                  </tr>
+                                </template>
+                                <template x-if="release.improvements.length === 0">
+                                  <tr>
+                                    <td colspan="2" class="muted-cell">
+                                      No improvements listed.
+                                    </td>
+                                  </tr>
+                                </template>
+                              </tbody>
+                            </table>
+                          </div>
+                        </section>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </article>
+          </template>
+
+          <div :style="`height: ${virtual.bottomPadding}px`" aria-hidden="true"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer" aria-label="Project information">
+      <div class="footer-info">
+        <span>up 2 date data</span>
+        <span aria-hidden="true">·</span>
+        <a
+          class="footer-link footer-link-rotunnel"
+          href="https://rotunnel.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          powered by <span>Rotunnel</span>
+        </a>
+        <span aria-hidden="true">·</span>
+        <a
+          class="footer-link footer-link-github"
+          href="https://github.com/w1nthinker/rodate"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <span>OSS on GitHub</span>
+        </a>
+      </div>
+    </footer>
+
+    <div class="notification-stack" aria-live="polite" aria-atomic="false">
+      <template x-for="notice in notifications" :key="notice.id">
+        <section
+          class="status-toast"
+          :class="{ 'is-actionable': notice.releaseNumber }"
+          :role="notice.releaseNumber ? 'button' : 'status'"
+          :tabindex="notice.releaseNumber ? 0 : -1"
+          x-show="notice.visible"
+          @click="jumpToNotification(notice)"
+          @keydown.enter.prevent="jumpToNotification(notice)"
+          @keydown.space.prevent="jumpToNotification(notice)"
+          x-transition:enter="td-panel-enter"
+          x-transition:enter-start="td-panel-enter-start"
+          x-transition:enter-end="td-panel-enter-end"
+          x-transition:leave="td-panel-leave"
+          x-transition:leave-start="td-panel-leave-start"
+          x-transition:leave-end="td-panel-leave-end"
+        >
+          <i class="ph-bold ph-bell-ringing" aria-hidden="true"></i>
+          <div>
+            <strong x-text="notice.title"></strong>
+            <p x-text="notice.body"></p>
+          </div>
+          <button
+            type="button"
+            class="toast-close"
+            @click.stop="dismissNotification(notice.id)"
+            aria-label="Dismiss notification"
+            title="Dismiss notification"
+          >
+            <i class="ph-bold ph-x" aria-hidden="true"></i>
+          </button>
+        </section>
+      </template>
+    </div>
+
+    <div class="bottom-controls">
+      <div
+        class="timeframe-menu"
+        @click.outside="timeframeOpen = false"
+        @keydown.escape.window="timeframeOpen = false"
+      >
+        <button
+          type="button"
+          class="timeframe-current"
+          @click="timeframeOpen = !timeframeOpen"
+          :aria-expanded="timeframeOpen"
+          aria-label="Release timeframe"
+        >
+          <i class="ph-bold ph-clock-counter-clockwise" aria-hidden="true"></i>
+          <span x-text="timeframeLabel()"></span>
+          <i
+            class="ph-bold"
+            :class="timeframeOpen ? 'ph-caret-down' : 'ph-caret-up'"
+            aria-hidden="true"
+          ></i>
+        </button>
+
+        <section
+          class="timeframe-options"
+          x-cloak
+          x-show="timeframeOpen"
+          x-transition:enter="td-panel-enter"
+          x-transition:enter-start="td-panel-enter-start"
+          x-transition:enter-end="td-panel-enter-end"
+          x-transition:leave="td-panel-leave"
+          x-transition:leave-start="td-panel-leave-start"
+          x-transition:leave-end="td-panel-leave-end"
+          role="menu"
+          aria-label="Release timeframe options"
+        >
+          <template x-for="item in timeframeOptions()" :key="item.id">
+            <button
+              type="button"
+              class="timeframe-option"
+              :class="timeframeButtonClass(item.id)"
+              :disabled="timeframeDisabled(item.id)"
+              @click="setTimeframe(item.id)"
+              role="menuitemradio"
+              :aria-checked="timeframeMode === item.id"
+            >
+              <span x-text="item.label"></span>
+              <small x-text="timeframeReleaseCount(item.id)"></small>
+              <i
+                class="ph-bold ph-check"
+                x-show="timeframeMode === item.id"
+                aria-hidden="true"
+              ></i>
+            </button>
+          </template>
+        </section>
+      </div>
+
+      <button
+        class="btn calendar-button"
+        type="button"
+        @click="openCalendar()"
+        title="Open release calendar"
+        aria-label="Open release calendar"
+      >
+        <i class="ph-bold ph-calendar-blank" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <div
+      class="calendar-overlay"
+      x-cloak
+      x-show="calendarOpen"
+      x-transition:enter="td-overlay-enter"
+      x-transition:enter-start="td-overlay-enter-start"
+      x-transition:enter-end="td-overlay-enter-end"
+      x-transition:leave="td-overlay-leave"
+      x-transition:leave-start="td-overlay-leave-start"
+      x-transition:leave-end="td-overlay-leave-end"
+      @click.self="calendarOpen = false"
+      @keydown.escape.window="calendarOpen = false"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Release calendar"
+    >
+      <section
+        class="calendar-panel"
+        x-transition:enter="td-panel-enter"
+        x-transition:enter-start="td-panel-enter-start"
+        x-transition:enter-end="td-panel-enter-end"
+        x-transition:leave="td-panel-leave"
+        x-transition:leave-start="td-panel-leave-start"
+        x-transition:leave-end="td-panel-leave-end"
+      >
+        <div class="calendar-head">
+          <div>
+            <p class="eyebrow">Calendar</p>
+            <h2 x-text="calendarTitle()"></h2>
+          </div>
+          <div class="calendar-actions">
+            <input
+              class="calendar-month-input"
+              type="text"
+              inputmode="numeric"
+              placeholder="YYYY-MM"
+              x-model="calendarMonthDraft"
+              @input="handleCalendarMonthInput($event.target.value)"
+              @change="handleCalendarMonthInput($event.target.value)"
+              aria-label="Jump to month"
+              title="Jump to month"
+            />
+            <button
+              class="icon-button"
+              type="button"
+              @click="shiftCalendarMonth(-1)"
+              aria-label="Previous month"
+              title="Previous month"
+            >
+              <i class="ph-bold ph-caret-left" aria-hidden="true"></i>
+            </button>
+            <button
+              class="icon-button"
+              type="button"
+              @click="shiftCalendarMonth(1)"
+              aria-label="Next month"
+              title="Next month"
+            >
+              <i class="ph-bold ph-caret-right" aria-hidden="true"></i>
+            </button>
+            <button
+              class="icon-button"
+              type="button"
+              @click="calendarOpen = false"
+              aria-label="Close calendar"
+              title="Close calendar"
+            >
+              <i class="ph-bold ph-x" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="calendar-weekdays">
+          <template x-for="weekday in calendarWeekdays()" :key="weekday">
+            <span x-text="weekday"></span>
+          </template>
+        </div>
+
+        <div
+          class="calendar-grid-shell"
+          :class="{ 'is-out-of-range': calendarOutOfRange() }"
+        >
+          <div class="calendar-range-overlay" x-show="calendarOutOfRange()">
+            <strong x-text="timeframeLabel()"></strong>
+            <span x-text="calendarRangeMessage()"></span>
+          </div>
+          <div class="calendar-grid">
+          <template x-for="day in calendarDays()" :key="day.key">
+            <button
+              type="button"
+              class="calendar-day"
+              :class="{
+                'outside-month': !day.inMonth,
+                'has-release': day.releases.length > 0
+              }"
+              :disabled="day.releases.length === 0"
+              @click="jumpToDate(day)"
+              :aria-label="calendarDayLabel(day)"
+            >
+              <span class="day-number" x-text="day.day"></span>
+              <span
+                class="pending-number"
+                x-show="day.pendingCount > 0"
+                x-text="day.pendingCount"
+              ></span>
+              <span class="day-dots" aria-hidden="true">
+                <template x-for="item in day.releases.slice(0, 4)" :key="item.number">
+                  <span class="release-dot" :class="calendarDotClass(item)"></span>
+                </template>
+                <span
+                  class="more-dot"
+                  x-show="day.releases.length > 4"
+                  x-text="`+${day.releases.length - 4}`"
+                ></span>
+              </span>
+            </button>
+          </template>
+          </div>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>
