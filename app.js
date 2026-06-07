@@ -1409,7 +1409,7 @@ function rodateApp() {
         } catch (_fallbackError) {
           this.notifyIssue(
             "Browser cache is full",
-            `rodate will refresh from network on the next load. ${error.message}`,
+            `Rodate will refresh from network on the next load. ${error.message}`,
             "cache-full",
           );
         }
