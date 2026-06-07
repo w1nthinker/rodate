@@ -84,10 +84,10 @@
         document.documentElement.setAttribute("data-theme", resolved);
       })();
     </script>
-    <link rel="stylesheet" href="styles.css?v=20260602z" />
+    <link rel="stylesheet" href="styles.css?v=20260607l" />
 
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-    <script defer src="app.js?v=20260607i"></script>
+    <script defer src="app.js?v=20260607l"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   </head>
 
@@ -426,14 +426,15 @@
                         <template x-if="devForumMessageIsLoading(release)">
                           <div class="message-loading">
                             <div class="message-skeleton" aria-live="polite">
+                              <span class="skeleton-line skeleton-label"></span>
                               <span class="skeleton-line skeleton-long"></span>
                               <span class="skeleton-line"></span>
                               <span class="skeleton-line skeleton-short"></span>
                             </div>
                           </div>
                         </template>
-                        <template x-if="!hasFullDevForumMessage(release) && !devForumMessageIsLoading(release)">
-                          <p class="message-empty">DevForum message unavailable.</p>
+                        <template x-if="devForumMessageIsEmpty(release)">
+                          <p class="message-empty" x-text="devForumMessageEmptyLabel(release)"></p>
                         </template>
                       </div>
                     </section>

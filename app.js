@@ -14,9 +14,9 @@ const THEME_KEY = "rodate:theme";
 const SEARCH_KEY = "rodate:search";
 const TIMEFRAME_KEY = "rodate:timeframe";
 const CACHE_VERSION = 3;
-const MAX_CACHED_DETAIL_RELEASES = 120;
-const MAX_CACHED_QUOTE_RELEASES = 120;
-const MAX_CACHED_ROW_TEXT = 360;
+const MAX_CACHED_DETAIL_RELEASES = 48;
+const MAX_CACHED_QUOTE_RELEASES = 24;
+const MAX_CACHED_ROW_TEXT = 220;
 const CACHE_WRITE_DELAY_MS = 900;
 const STATUS_NOTIFICATION_LIMIT = 4;
 const NOTIFICATION_TTL_MS = 9000;
@@ -32,6 +32,10 @@ const TIMEFRAMES = [
   { id: "all", label: "All time" },
 ];
 const READ_THROUGH_PROXIES = [
+  {
+    name: "Jina Reader",
+    url: (url) => `https://r.jina.ai/http://${url}`,
+  },
   {
     name: "AllOrigins",
     url: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
@@ -88,6 +92,8 @@ function rodateApp() {
       forumPages: 0,
       forumTopics: 0,
       forumIndexComplete: false,
+      forumIndexFailed: false,
+      forumError: "",
       docsLoaded: 0,
       docsFailed: 0,
     },
@@ -140,6 +146,7 @@ function rodateApp() {
       lastRestoredAt: null,
       loadedRows: 0,
     },
+    cacheFlushHandler: null,
     renderFrame: 0,
     scrollFrame: 0,
     domFrame: 0,
@@ -151,6 +158,7 @@ function rodateApp() {
       this.initTheme();
       this.initTimeframe();
       this.startDetailRun("Initial load");
+      this.setupCacheFlushHandlers();
       this.setupRevealObserver();
       const restored = this.restoreCache();
       this.setActivity(
@@ -173,6 +181,7 @@ function rodateApp() {
           return count;
         })
         .catch((error) => {
+          this.markDevForumIndexFailed(error);
           this.notifyIssue(
             "DevForum dates unavailable",
             `Release changes will still load from Creator Hub. ${error.message}`,
@@ -191,7 +200,8 @@ function rodateApp() {
           this.cache.restored ? "background fetch" : this.compactBuildId(),
         );
         if (this.cache.restored) {
-          this.enqueueAllKnownReleaseDetails(true);
+          this.enqueueMissingCreatorHubReleases();
+          this.enqueueAllKnownReleaseDetails(false);
         }
         this.kickDetailWorkers();
       } catch (error) {
@@ -246,9 +256,13 @@ function rodateApp() {
       };
     },
 
-    async loadForumIndex() {
+    async loadForumIndex(options = {}) {
       let total = 0;
       let pagesWithoutTopics = 0;
+      const stopWhenCaughtUp =
+        options.stopWhenCaughtUp ?? this.cache.restored;
+      this.source.forumIndexFailed = false;
+      this.source.forumError = "";
       this.source.forumIndexComplete = false;
 
       for (let page = 0; page < MAX_FORUM_PAGES; page += 1) {
@@ -262,6 +276,7 @@ function rodateApp() {
         this.refreshNetworkWarning();
         const topics = json.topic_list?.topics || [];
         let pageTopics = 0;
+        let pageChanged = false;
 
         for (const topic of topics) {
           const number = parseReleaseNumber(topic.title);
@@ -271,8 +286,7 @@ function rodateApp() {
           const existing = this.getRelease(number);
           const existingHasFullQuote = releaseHasFullQuote(existing);
           const excerptQuote = extractForumExcerpt(topic.excerpt, number);
-          pageTopics += 1;
-          total += this.upsertRelease(number, {
+          const forumPatch = {
             createdAt,
             lastReplyAt: topic.last_posted_at || null,
             topicId: topic.id || null,
@@ -291,12 +305,14 @@ function rodateApp() {
                 : excerptQuote
                   ? "excerpt"
                   : existing?.quoteStatus || "idle",
-          })
-            ? 1
-            : 0;
+          };
+          pageTopics += 1;
+          pageChanged =
+            pageChanged || forumPatchAddsMissingData(existing, forumPatch);
+          total += this.upsertRelease(number, forumPatch) ? 1 : 0;
 
           if (this.releaseInTimeframe(this.getRelease(number))) {
-            this.enqueueReleaseDetail(number);
+            pageChanged = this.enqueueReleaseDetail(number) || pageChanged;
           }
         }
 
@@ -306,6 +322,7 @@ function rodateApp() {
           "Reading DevForum",
           `${this.source.forumTopics} releases`,
         );
+        this.prefetchVisibleDevForumMessages();
 
         if (pageTopics === 0) {
           pagesWithoutTopics += 1;
@@ -321,10 +338,25 @@ function rodateApp() {
           this.source.forumIndexComplete = true;
           break;
         }
+        if (
+          stopWhenCaughtUp &&
+          pageTopics > 0 &&
+          !pageChanged &&
+          !this.needsMoreForumPagesForTimeframe()
+        ) {
+          break;
+        }
         await wait(80);
       }
 
+      this.source.forumIndexComplete = true;
       return total;
+    },
+
+    markDevForumIndexFailed(error) {
+      this.source.forumIndexFailed = true;
+      this.source.forumError = error?.message || "DevForum could not be read.";
+      this.source.forumIndexComplete = false;
     },
 
     async loadFallbackReleaseNumbers() {
@@ -394,16 +426,40 @@ function rodateApp() {
     },
 
     enqueueAllKnownReleaseDetails(force = false) {
+      let queued = 0;
       for (const release of this.orderedReleases()) {
-        this.enqueueReleaseDetail(release.number, { force });
+        if (this.enqueueReleaseDetail(release.number, { force })) {
+          queued += 1;
+        }
       }
+      return queued;
+    },
+
+    enqueueMissingCreatorHubReleases() {
+      const latest = this.creatorHubCurrentReleaseNumber;
+      if (!latest) return 0;
+
+      const knownNumbers = this.releaseOrder.filter(Number.isFinite);
+      const newestKnown = knownNumbers.length ? Math.max(...knownNumbers) : 0;
+      if (newestKnown >= latest) return 0;
+
+      let queued = 0;
+      for (let n = latest; n > newestKnown; n -= 1) {
+        this.upsertRelease(n, {});
+        if (this.releaseInTimeframe(this.getRelease(n))) {
+          queued += this.enqueueReleaseDetail(n) ? 1 : 0;
+        }
+      }
+      return queued;
     },
 
     enqueueReleaseDetail(number, options = {}) {
       const release = this.getRelease(number);
       const force = Boolean(options.force);
-      if (!release || (release.detailStatus === "loaded" && !force)) return;
-      if (this.detailQueued[number]) return;
+      if (!release || (release.detailStatus === "loaded" && !force)) {
+        return false;
+      }
+      if (this.detailQueued[number]) return false;
 
       this.detailQueued[number] = true;
       this.detailQueue.push({ number, force });
@@ -421,6 +477,8 @@ function rodateApp() {
       if (this.buildId) {
         this.kickDetailWorkers();
       }
+
+      return true;
     },
 
     kickDetailWorkers() {
@@ -495,6 +553,9 @@ function rodateApp() {
         this.detailWorkers === 0 ? "Scanned changes" : "Scanning changes",
         `${this.loadedReleaseCount()} of ${this.releaseOrder.length}`,
       );
+      if (this.detailWorkers === 0 && this.detailQueue.length === 0) {
+        this.flushCacheSave();
+      }
     },
 
     async fetchReleaseRows(number) {
@@ -568,6 +629,12 @@ function rodateApp() {
         this.quoteQueue.push(release.number);
       }
       this.kickQuoteWorkers();
+    },
+
+    prefetchVisibleDevForumMessages(options = {}) {
+      for (const release of this.mountedReleases()) {
+        this.ensureQuote(release, options);
+      }
     },
 
     kickQuoteWorkers() {
@@ -686,9 +753,8 @@ function rodateApp() {
 
       const terms = this.searchTerms(normalizedQuery);
       const releaseNumberQuery = this.searchReleaseNumberQuery(normalizedQuery);
-      const hasSearch = terms.length > 0;
       const releases = this.allReleases().filter((release) => {
-        if (!hasSearch && !this.releaseInTimeframe(release)) return false;
+        if (!this.releaseInTimeframe(release)) return false;
         return this.releaseMatchesSearch(release, terms, releaseNumberQuery);
       });
 
@@ -736,19 +802,56 @@ function rodateApp() {
     },
 
     hasDevForumMessageSurface(release) {
-      return Boolean(release?.quote || release?.topicId || release?.forumUrl);
+      return Boolean(release);
     },
 
     hasFullDevForumMessage(release) {
       return releaseHasFullQuote(release);
     },
 
-    devForumMessageIsLoading(release) {
-      if (!release?.topicId || releaseHasFullQuote(release)) return false;
+    hasDevForumPreview(release) {
+      return Boolean(release?.quote && !releaseHasFullQuote(release));
+    },
+
+    devForumIndexIsLoading() {
       return (
-        release.quoteStatus !== "failed" ||
+        !this.source.forumIndexComplete && !this.source.forumIndexFailed
+      );
+    },
+
+    devForumMessageIsLoading(release) {
+      if (!release || releaseHasFullQuote(release)) return false;
+      if (!release.topicId) return this.devForumIndexIsLoading();
+      if (this.hasDevForumPreview(release)) {
+        return (
+          release.quoteStatus !== "failed" ||
+          (this.quoteRetryAfter[release.number] || 0) > Date.now()
+        );
+      }
+      return (
+        ["idle", "queued", "loading"].includes(release.quoteStatus) ||
         (this.quoteRetryAfter[release.number] || 0) > Date.now()
       );
+    },
+
+    devForumMessageIsEmpty(release) {
+      return (
+        !this.hasFullDevForumMessage(release) &&
+        !this.devForumMessageIsLoading(release)
+      );
+    },
+
+    devForumMessageEmptyLabel(release) {
+      if (!release?.topicId && this.source.forumIndexFailed) {
+        return "DevForum is not responding through the browser network path.";
+      }
+      if (!release?.topicId) {
+        return "DevForum post is still pending.";
+      }
+      if (release.quoteStatus === "empty") {
+        return "DevForum message body was empty.";
+      }
+      return "DevForum message unavailable.";
     },
 
     onSearchChange() {
@@ -853,6 +956,7 @@ function rodateApp() {
       });
       if (mode === "all" || this.needsMoreForumPagesForTimeframe()) {
         this.loadForumIndex().catch((error) => {
+          this.markDevForumIndexFailed(error);
           this.notifyIssue(
             "DevForum dates unavailable",
             `Release changes already cached will remain visible. ${error.message}`,
@@ -1210,6 +1314,25 @@ function rodateApp() {
         this.cacheWriteTimer = 0;
         this.saveCache();
       }, CACHE_WRITE_DELAY_MS);
+    },
+
+    setupCacheFlushHandlers() {
+      if (this.cacheFlushHandler) return;
+      this.cacheFlushHandler = () => this.flushCacheSave();
+      window.addEventListener("pagehide", this.cacheFlushHandler);
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") {
+          this.flushCacheSave();
+        }
+      });
+    },
+
+    flushCacheSave() {
+      if (this.cacheWriteTimer) {
+        window.clearTimeout(this.cacheWriteTimer);
+        this.cacheWriteTimer = 0;
+      }
+      this.saveCache();
     },
 
     saveCache() {
@@ -1602,7 +1725,7 @@ function rodateApp() {
 
     afterCardMounted(number) {
       const release = this.getRelease(number);
-      if (release && this.releaseIsExpanded(number)) this.ensureQuote(release);
+      if (release) this.ensureQuote(release, { priority: true });
       this.scheduleDomWork();
     },
 
@@ -1674,7 +1797,10 @@ function rodateApp() {
         if (this.releaseIsExpanded(release.number)) {
           this.ensureQuote(release, {
             forceRetry: this.tableIsOpen(release.number, "devforum"),
+            priority: true,
           });
+        } else {
+          this.ensureQuote(release);
         }
       }
 
@@ -2442,6 +2568,24 @@ function releaseHasFullQuote(release) {
   );
 }
 
+function forumPatchAddsMissingData(release, patch) {
+  if (!release) return true;
+  if (patch.createdAt && !release.createdAt) return true;
+  if (patch.lastReplyAt && !release.lastReplyAt) return true;
+  if (patch.topicId && !release.topicId) return true;
+  if (patch.topicSlug && !release.topicSlug) return true;
+  if (patch.forumUrl && !release.forumUrl) return true;
+  if (patch.quote && !release.quote) return true;
+  if (
+    patch.quoteStatus &&
+    patch.quoteStatus !== "idle" &&
+    release.quoteStatus === "idle"
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function truncateCacheText(value) {
   const text = normalizeWhitespace(value);
   if (text.length <= MAX_CACHED_ROW_TEXT) return text;
@@ -2496,7 +2640,11 @@ async function fetchJson(url) {
       throw new Error("DevForum blocked the public JSON request.");
     }
     try {
-      return JSON.parse(extractJsonPayload(text));
+      const parsed = JSON.parse(extractJsonPayload(text));
+      if (typeof parsed?.data?.content === "string") {
+        return JSON.parse(extractJsonPayload(parsed.data.content));
+      }
+      return parsed;
     } catch (_error) {
       throw new Error(`${new URL(url).hostname} did not return JSON`);
     }

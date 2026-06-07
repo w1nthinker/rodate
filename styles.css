@@ -939,6 +939,8 @@ kbd {
 }
 
 .message-body {
+  display: grid;
+  gap: 14px;
   max-height: min(520px, calc(100vh - 260px));
   overflow: auto;
   overscroll-behavior: contain;
@@ -1122,10 +1124,9 @@ kbd {
 
 .message-loading {
   display: grid;
-  min-height: 116px;
+  min-height: 132px;
   align-items: center;
   overflow: hidden;
-  padding: 18px 16px;
 }
 
 .message-skeleton {
@@ -1135,6 +1136,10 @@ kbd {
 
 .message-empty {
   margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: var(--surface);
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: 0.78rem;
@@ -1190,6 +1195,12 @@ kbd {
 
 .skeleton-short {
   width: 46%;
+}
+
+.skeleton-label {
+  width: 84px;
+  height: 9px;
+  opacity: 0.72;
 }
 
 .inline-error {
