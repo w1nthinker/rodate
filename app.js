@@ -9,10 +9,10 @@ const VIRTUAL_GAP = 18;
 const FORUM_GRACE_MS = 3500;
 const FETCH_TIMEOUT_MS = 20000;
 const QUOTE_RETRY_DELAY_MS = 12000;
-const CACHE_KEY = "Rodate:release-cache:v3";
-const THEME_KEY = "Rodate:theme";
-const SEARCH_KEY = "Rodate:search";
-const TIMEFRAME_KEY = "Rodate:timeframe";
+const CACHE_KEY = "rodate:release-cache:v3";
+const THEME_KEY = "rodate:theme";
+const SEARCH_KEY = "rodate:search";
+const TIMEFRAME_KEY = "rodate:timeframe";
 const CACHE_VERSION = 3;
 const MAX_CACHED_DETAIL_RELEASES = 48;
 const MAX_CACHED_QUOTE_RELEASES = 24;
@@ -65,7 +65,7 @@ const COLORS = {
 
 const chartRegistry = new Map();
 
-function RodateApp() {
+function rodateApp() {
   return {
     buildId: "",
     fatalError: "",
@@ -1409,7 +1409,7 @@ function RodateApp() {
         } catch (_fallbackError) {
           this.notifyIssue(
             "Browser cache is full",
-            `Rodate will refresh from network on the next load. ${error.message}`,
+            `rodate will refresh from network on the next load. ${error.message}`,
             "cache-full",
           );
         }
@@ -1523,7 +1523,7 @@ function RodateApp() {
       try {
         new window.Notification(title, {
           body,
-          tag: `Rodate-${title}`,
+          tag: `rodate-${title}`,
         });
       } catch (_error) {
         // In-app notices still cover browsers that block native notifications.
@@ -1562,8 +1562,8 @@ function RodateApp() {
           : "light";
 
       this.resolvedTheme = resolved;
-      document.documentElement.dataset.appTheme = resolved;
-      document.documentElement.dataset.appThemeMode = this.themeMode;
+      document.documentElement.dataset.rodateTheme = resolved;
+      document.documentElement.dataset.rodateThemeMode = this.themeMode;
       document.documentElement.setAttribute("data-theme", resolved);
       this.renderChartsSoon();
     },
@@ -3125,4 +3125,4 @@ function wait(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-window.RodateApp = RodateApp;
+window.rodateApp = rodateApp;

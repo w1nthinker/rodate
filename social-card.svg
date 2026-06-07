@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="Rodate dashboard preview">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="rodate dashboard preview">
   <rect width="1200" height="630" fill="#171717"/>
   <path d="M0 0h1200v630H0z" fill="#171717"/>
   <g opacity=".18" stroke="#292929">
     <path d="M0 70h1200M0 140h1200M0 210h1200M0 280h1200M0 350h1200M0 420h1200M0 490h1200M0 560h1200"/>
     <path d="M100 0v630M200 0v630M300 0v630M400 0v630M500 0v630M600 0v630M700 0v630M800 0v630M900 0v630M1000 0v630M1100 0v630"/>
   </g>
-  <text x="72" y="116" fill="#f3f3ee" font-family="Georgia, serif" font-size="74" font-weight="500">Rodate</text>
+  <text x="72" y="116" fill="#f3f3ee" font-family="Georgia, serif" font-size="74" font-weight="500">rodate</text>
   <text x="76" y="162" fill="#9b9b94" font-family="Arial, sans-serif" font-size="24" font-weight="600">Roblox release note tracker</text>
   <g transform="translate(76 235)">
     <rect width="505" height="285" rx="14" fill="#202020" stroke="rgba(255,255,255,.13)"/>
