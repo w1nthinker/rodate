@@ -26,7 +26,7 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-:root[data-rodate-theme="dark"] {
+:root[data-app-theme="dark"] {
   color-scheme: dark;
   --canvas: #171717;
   --surface: #202020;
@@ -93,7 +93,7 @@ textarea {
   background-image: url("data:image/svg+xml,%3Csvg width='28' height='28' viewBox='0 0 28 28' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M28 0H0V28' stroke='%23EAEAEA' stroke-width='1'/%3E%3C/svg%3E");
 }
 
-:root[data-rodate-theme="dark"] .ambient-plane {
+:root[data-app-theme="dark"] .ambient-plane {
   opacity: 0.2;
   background-image: url("data:image/svg+xml,%3Csvg width='28' height='28' viewBox='0 0 28 28' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M28 0H0V28' stroke='%23292929' stroke-width='1'/%3E%3C/svg%3E");
 }
@@ -1374,7 +1374,7 @@ kbd {
   background: color-mix(in srgb, var(--surface) 76%, var(--canvas)) !important;
 }
 
-:root[data-rodate-theme="dark"] .release-table tbody tr:nth-child(even) {
+:root[data-app-theme="dark"] .release-table tbody tr:nth-child(even) {
   background: #242424 !important;
 }
 
@@ -1720,7 +1720,7 @@ kbd {
   opacity: 0.58;
 }
 
-:root[data-rodate-theme="dark"] .calendar-month-input {
+:root[data-app-theme="dark"] .calendar-month-input {
   color-scheme: dark;
 }
 
