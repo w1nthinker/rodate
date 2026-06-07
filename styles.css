@@ -150,8 +150,9 @@ textarea {
 }
 
 .top-search {
+  position: relative;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 28px;
+  grid-template-columns: 18px minmax(0, 1fr);
   width: clamp(210px, 22vw, 340px);
   height: 46px;
   align-items: center;
@@ -177,6 +178,11 @@ textarea {
   font-family: var(--font-mono);
   font-size: 0.76rem;
   font-weight: 600;
+  padding-right: 0;
+}
+
+.top-search.has-search-query input {
+  padding-right: 34px;
 }
 
 .top-search input::placeholder {
@@ -188,6 +194,9 @@ textarea {
 }
 
 .search-clear {
+  position: absolute;
+  top: 50%;
+  right: 6px;
   display: inline-grid;
   width: 28px;
   height: 28px;
@@ -201,6 +210,7 @@ textarea {
     background-color 180ms var(--ease-out),
     color 180ms var(--ease-out),
     transform 180ms var(--ease-out);
+  transform: translateY(-50%);
 }
 
 .search-clear:hover {
@@ -209,7 +219,26 @@ textarea {
 }
 
 .search-clear:active {
-  transform: scale(0.94);
+  transform: translateY(-50%) scale(0.94);
+}
+
+.search-clear-enter,
+.search-clear-leave {
+  transition:
+    opacity 160ms var(--ease-out),
+    transform 160ms var(--ease-out);
+}
+
+.search-clear-enter-start,
+.search-clear-leave-end {
+  opacity: 0;
+  transform: translateY(-50%) scale(0.82);
+}
+
+.search-clear-enter-end,
+.search-clear-leave-start {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
 }
 
 .app-header {
@@ -540,6 +569,11 @@ kbd {
   color: var(--muted);
 }
 
+.empty-state-warning i {
+  color: var(--yellow-ink);
+  font-size: 1.7rem;
+}
+
 .release-card {
   position: relative;
   margin-bottom: 18px;
@@ -843,6 +877,11 @@ kbd {
   font-weight: 700;
 }
 
+.message-title:hover {
+  background: var(--canvas);
+  color: var(--ink-strong);
+}
+
 .message-toggle {
   display: flex;
   min-width: 0;
@@ -862,7 +901,7 @@ kbd {
 }
 
 .message-toggle:hover {
-  background: var(--canvas);
+  background: transparent;
   color: var(--ink-strong);
 }
 
@@ -876,9 +915,9 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  padding: 5px 7px;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
   background: transparent;
   color: var(--ink-strong);
   font: inherit;
@@ -887,8 +926,7 @@ kbd {
 }
 
 .message-link:hover {
-  border-color: var(--line);
-  background: var(--canvas);
+  background: transparent;
   color: var(--yellow-ink);
 }
 
@@ -900,59 +938,221 @@ kbd {
   font-size: 0.9rem;
 }
 
-.message-scroll {
-  max-height: 190px;
+.message-body {
+  max-height: min(520px, calc(100vh - 260px));
   overflow: auto;
-  padding: 16px;
+  overscroll-behavior: contain;
+  padding: 18px 20px;
+  scrollbar-gutter: stable;
+}
+
+.message-content {
+  display: block;
+  min-height: 0;
+  overflow: hidden;
   color: var(--ink-strong);
-  font-family: var(--font-serif);
-  font-size: clamp(1.08rem, 1.8vw, 1.42rem);
+  font-family: var(--font-ui);
+  font-size: 0.95rem;
   font-weight: 400;
-  line-height: 1.35;
-  letter-spacing: -0.01em;
-  white-space: pre-wrap;
+  line-height: 1.55;
+  letter-spacing: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
-.message-scroll p,
-.message-scroll ul,
-.message-scroll ol,
-.message-scroll blockquote,
-.message-scroll aside {
-  margin: 0 0 0.85em;
+.message-content > :first-child {
+  margin-top: 0;
 }
 
-.message-scroll p:last-child,
-.message-scroll ul:last-child,
-.message-scroll ol:last-child,
-.message-scroll blockquote:last-child,
-.message-scroll aside:last-child {
+.message-content p,
+.message-content ul,
+.message-content ol,
+.message-content blockquote,
+.message-content aside,
+.message-content pre,
+.message-content table,
+.message-content .md-table {
+  white-space: normal;
+  margin: 0 0 1em;
+}
+
+.message-content p:last-child,
+.message-content ul:last-child,
+.message-content ol:last-child,
+.message-content blockquote:last-child,
+.message-content aside:last-child,
+.message-content pre:last-child,
+.message-content table:last-child,
+.message-content .md-table:last-child {
   margin-bottom: 0;
 }
 
-.message-scroll ul,
-.message-scroll ol {
-  padding-left: 1.25em;
+.message-content ul,
+.message-content ol {
+  padding-left: 1.45em;
 }
 
-.message-scroll li {
+.message-content li {
   margin: 0.25em 0;
 }
 
-.message-scroll blockquote {
+.message-content li > p {
+  margin: 0.35em 0;
+}
+
+.message-content li > p:first-child {
+  margin-top: 0;
+}
+
+.message-content li > p:last-child {
+  margin-bottom: 0;
+}
+
+.message-content h1,
+.message-content h2,
+.message-content h3,
+.message-content h4,
+.message-content h5,
+.message-content h6 {
+  margin: 1.2em 0 0.55em;
+  color: var(--ink-strong);
+  font-family: var(--font-ui);
+  font-weight: 700;
+  line-height: 1.18;
+}
+
+.message-content h1 {
+  font-size: 1.35rem;
+}
+
+.message-content h2 {
+  font-size: 1.2rem;
+}
+
+.message-content h3,
+.message-content h4,
+.message-content h5,
+.message-content h6 {
+  font-size: 1.05rem;
+}
+
+.message-content blockquote {
   border-left: 2px solid var(--line-strong);
-  padding-left: 0.85em;
+  padding-left: 0.95em;
   color: var(--muted);
 }
 
-.message-scroll a {
+.message-content aside.quote {
+  border-left: 3px solid var(--line-strong);
+  padding: 0 0 0 0.95em;
+  color: var(--muted);
+}
+
+.message-content aside.quote .title {
+  margin-bottom: 0.55em;
+  color: var(--ink-strong);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.message-content a {
   color: var(--yellow-ink);
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 0.16em;
 }
 
-.message-scroll a:hover {
+.message-content a:hover {
   color: var(--ink-strong);
+}
+
+.message-content img,
+.message-content video {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.message-content pre,
+.message-content code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+}
+
+.message-content pre {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  background: var(--canvas);
+  white-space: pre;
+}
+
+.message-content code {
+  border-radius: 4px;
+  padding: 0.1em 0.28em;
+  background: var(--canvas);
+}
+
+.message-content pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.message-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+.message-content th,
+.message-content td {
+  border: 1px solid var(--line);
+  padding: 7px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.message-content hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 1.25em 0;
+}
+
+.message-loading {
+  display: grid;
+  min-height: 116px;
+  align-items: center;
+  overflow: hidden;
+  padding: 18px 16px;
+}
+
+.message-skeleton {
+  display: grid;
+  gap: 12px;
+}
+
+.message-empty {
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.message-body::-webkit-scrollbar {
+  width: 10px;
+}
+
+.message-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.message-body::-webkit-scrollbar-thumb {
+  border: 3px solid var(--surface-soft);
+  border-radius: 999px;
+  background: var(--line-strong);
 }
 
 .release-loading {
@@ -1046,16 +1246,17 @@ kbd {
   border-radius: 6px;
   padding: 0;
   background: transparent;
+  color: var(--ink-strong);
   text-align: left;
 }
 
 .chart-toggle:hover {
-  color: var(--ink-strong);
+  color: var(--muted);
 }
 
 .chart-toggle i {
   flex: 0 0 auto;
-  color: var(--muted);
+  color: currentColor;
   font-size: 0.86rem;
 }
 
@@ -1079,6 +1280,7 @@ kbd {
 .table-title {
   display: flex;
   width: 100%;
+  min-height: 58px;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -1087,6 +1289,7 @@ kbd {
   background: transparent;
   color: var(--ink-strong);
   font-weight: 600;
+  line-height: 1;
   text-align: left;
 }
 
@@ -1111,6 +1314,7 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  line-height: 1;
 }
 
 .table-count i {
@@ -1815,7 +2019,7 @@ kbd {
   }
 
   .top-search {
-    width: min(190px, calc(100vw - 184px));
+    width: min(220px, calc(100vw - 158px));
     min-width: 128px;
   }
 

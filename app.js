@@ -1,7 +1,6 @@
 const DOCS_BASE_URL = "https://create.rotunnel.com/docs";
 const FORUM_BASE_URL = "https://devforum.roblox.com";
 const FORUM_CATEGORY_URL = `${FORUM_BASE_URL}/c/updates/release-notes/62.json`;
-const SEED_RELEASE = 693;
 const EARLIEST_RELEASE = 308;
 const MAX_FORUM_PAGES = 80;
 const DETAIL_CONCURRENCY = 6;
@@ -9,11 +8,14 @@ const QUOTE_CONCURRENCY = 2;
 const VIRTUAL_GAP = 18;
 const FORUM_GRACE_MS = 3500;
 const FETCH_TIMEOUT_MS = 20000;
+const QUOTE_RETRY_DELAY_MS = 12000;
 const CACHE_KEY = "rodate:release-cache:v3";
 const THEME_KEY = "rodate:theme";
 const SEARCH_KEY = "rodate:search";
+const TIMEFRAME_KEY = "rodate:timeframe";
 const CACHE_VERSION = 3;
 const MAX_CACHED_DETAIL_RELEASES = 120;
+const MAX_CACHED_QUOTE_RELEASES = 120;
 const MAX_CACHED_ROW_TEXT = 360;
 const CACHE_WRITE_DELAY_MS = 900;
 const STATUS_NOTIFICATION_LIMIT = 4;
@@ -31,18 +33,13 @@ const TIMEFRAMES = [
 ];
 const READ_THROUGH_PROXIES = [
   {
-    name: "CodeTabs",
-    url: (url) =>
-      `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-  },
-  {
     name: "AllOrigins",
     url: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   },
 ];
+const CORS_LOCKED_HOSTS = new Set(["devforum.roblox.com"]);
 
 const networkState = {
-  proxyHosts: {},
   proxyUsed: false,
   proxyName: "",
 };
@@ -77,6 +74,7 @@ function rodateApp() {
     },
     releasesByNumber: {},
     releaseOrder: [],
+    creatorHubCurrentReleaseNumber: null,
     visibleReleases: [],
     detailQueue: [],
     detailQueued: {},
@@ -84,10 +82,12 @@ function rodateApp() {
     activeDetailNumbers: {},
     quoteQueue: [],
     quoteQueued: {},
+    quoteRetryAfter: {},
     quoteWorkers: 0,
     source: {
       forumPages: 0,
       forumTopics: 0,
+      forumIndexComplete: false,
       docsLoaded: 0,
       docsFailed: 0,
     },
@@ -155,7 +155,7 @@ function rodateApp() {
       const restored = this.restoreCache();
       this.setActivity(
         restored ? "Refreshing" : "Reading build id",
-        restored ? "cached data visible" : `release ${SEED_RELEASE}`,
+        restored ? "cached data visible" : "current release",
       );
       this.$nextTick(() => {
         this.revealVisibleBlocks();
@@ -182,7 +182,9 @@ function rodateApp() {
         });
 
       try {
-        this.buildId = await this.fetchBuildId(SEED_RELEASE);
+        const releaseIndex = await this.fetchCreatorHubReleaseIndex();
+        this.buildId = releaseIndex.buildId;
+        this.creatorHubCurrentReleaseNumber = releaseIndex.currentReleaseNumber;
         this.refreshNetworkWarning();
         this.setActivity(
           this.cache.restored ? "Refreshing changes" : "Build ID ready",
@@ -214,17 +216,15 @@ function rodateApp() {
       this.kickDetailWorkers();
     },
 
-    async fetchBuildId(n) {
-      const html = await fetchText(
-        `${DOCS_BASE_URL}/release-notes/release-notes-${n}`,
-      );
+    async fetchCreatorHubReleaseIndex() {
+      const html = await fetchText(`${DOCS_BASE_URL}/release-notes`);
       const match = html.match(
         /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/,
       );
 
       if (!match) {
         throw new Error(
-          "Creator Hub did not expose __NEXT_DATA__ for the seed release.",
+          "Creator Hub did not expose __NEXT_DATA__ for release notes.",
         );
       }
 
@@ -233,13 +233,23 @@ function rodateApp() {
         throw new Error("Creator Hub __NEXT_DATA__ did not include a buildId.");
       }
 
-      return nextData.buildId;
+      const currentReleaseNumber = parseCreatorHubCurrentReleaseNumber(nextData);
+      if (!currentReleaseNumber) {
+        throw new Error(
+          "Creator Hub did not expose the current release number.",
+        );
+      }
+
+      return {
+        buildId: nextData.buildId,
+        currentReleaseNumber,
+      };
     },
 
     async loadForumIndex() {
       let total = 0;
       let pagesWithoutTopics = 0;
-      const timeframeStart = this.timeframeStartDate();
+      this.source.forumIndexComplete = false;
 
       for (let page = 0; page < MAX_FORUM_PAGES; page += 1) {
         const url =
@@ -252,22 +262,14 @@ function rodateApp() {
         this.refreshNetworkWarning();
         const topics = json.topic_list?.topics || [];
         let pageTopics = 0;
-        let oldestReleaseDate = null;
 
         for (const topic of topics) {
           const number = parseReleaseNumber(topic.title);
           if (!number) continue;
 
           const createdAt = topic.created_at || null;
-          if (createdAt) {
-            const createdDate = new Date(createdAt);
-            if (!oldestReleaseDate || createdDate < oldestReleaseDate) {
-              oldestReleaseDate = createdDate;
-            }
-          }
           const existing = this.getRelease(number);
-          const existingHasFullQuote =
-            existing?.quoteStatus === "loaded" && !looksLikeExcerpt(existing.quote);
+          const existingHasFullQuote = releaseHasFullQuote(existing);
           const excerptQuote = extractForumExcerpt(topic.excerpt, number);
           pageTopics += 1;
           total += this.upsertRelease(number, {
@@ -311,18 +313,14 @@ function rodateApp() {
           pagesWithoutTopics = 0;
         }
 
-        if (pagesWithoutTopics >= 2) break;
+        if (pagesWithoutTopics >= 2) {
+          this.source.forumIndexComplete = true;
+          break;
+        }
         if (!json.topic_list?.more_topics_url && page > 0 && pageTopics === 0) {
+          this.source.forumIndexComplete = true;
           break;
         }
-        if (
-          this.timeframeMode !== "all" &&
-          oldestReleaseDate &&
-          oldestReleaseDate < timeframeStart
-        ) {
-          break;
-        }
-
         await wait(80);
       }
 
@@ -333,7 +331,10 @@ function rodateApp() {
       if (this.fallbackStarted) return;
       this.fallbackStarted = true;
       this.setActivity("Discovering releases", "Creator Hub scan");
-      const latest = await this.discoverLatestRelease();
+      const latest = this.creatorHubCurrentReleaseNumber;
+      if (!latest) {
+        throw new Error("Creator Hub current release number is unavailable.");
+      }
       const floor = this.fallbackReleaseFloor(latest);
       const numbers = [];
 
@@ -354,36 +355,14 @@ function rodateApp() {
       this.setActivity("Queued Creator Hub", `${numbers.length} releases`);
     },
 
-    async discoverLatestRelease() {
-      let latest = SEED_RELEASE;
-      let misses = 0;
-      let n = SEED_RELEASE + 1;
-
-      while (n < SEED_RELEASE + 90 && misses < 8) {
-        this.setActivity(
-          "Discovering releases",
-          `latest ${latest}, probing ${n}`
-        );
-        try {
-          const rows = await this.fetchReleaseRows(n);
-          this.applyReleaseRows(n, rows);
-          latest = n;
-          misses = 0;
-        } catch (_error) {
-          misses += 1;
-        }
-        n += 1;
-      }
-
-      return latest;
-    },
-
     async discoverOlderCreatorHubReleases() {
       if (this.olderDiscoveryRunning || !this.buildId) return;
       this.olderDiscoveryRunning = true;
 
       const knownNumbers = this.releaseOrder.filter(Number.isFinite);
-      let n = knownNumbers.length ? Math.min(...knownNumbers) - 1 : SEED_RELEASE - 1;
+      let n = knownNumbers.length
+        ? Math.min(...knownNumbers) - 1
+        : (this.creatorHubCurrentReleaseNumber || EARLIEST_RELEASE + 1) - 1;
       let misses = 0;
 
       this.startDetailRun("Backfilling all time");
@@ -569,14 +548,25 @@ function rodateApp() {
       });
     },
 
-    ensureQuote(release) {
-      if (!release.topicId) return;
-      if (release.quoteStatus === "loaded" || release.quoteStatus === "loading") return;
-      if (release.quoteStatus === "failed" || this.quoteQueued[release.number])
+    ensureQuote(release, options = {}) {
+      if (!release?.topicId) return;
+      if (releaseHasFullQuote(release) || release.quoteStatus === "loading") return;
+      if (this.quoteQueued[release.number]) return;
+      const retryAfter = this.quoteRetryAfter[release.number] || 0;
+      if (retryAfter > Date.now() && !options.ignoreCooldown) return;
+      if (
+        (release.quoteStatus === "failed" || release.quoteStatus === "empty") &&
+        !options.forceRetry
+      ) {
         return;
+      }
 
       this.quoteQueued[release.number] = true;
-      this.quoteQueue.push(release.number);
+      if (options.priority) {
+        this.quoteQueue.unshift(release.number);
+      } else {
+        this.quoteQueue.push(release.number);
+      }
       this.kickQuoteWorkers();
     },
 
@@ -613,14 +603,22 @@ function rodateApp() {
             : "";
 
           this.setRelease(number, {
-            quote: quote || "",
+            quote: quote || release.quote || "",
             quoteStatus: quote ? "loaded" : "empty",
           });
+          if (quote) {
+            delete this.quoteRetryAfter[number];
+          } else {
+            this.quoteRetryAfter[number] = Date.now() + QUOTE_RETRY_DELAY_MS;
+            this.scheduleQuoteRetry(number);
+          }
         } catch (_error) {
           this.setRelease(number, { quoteStatus: "failed" });
+          this.quoteRetryAfter[number] = Date.now() + QUOTE_RETRY_DELAY_MS;
+          this.scheduleQuoteRetry(number);
         }
 
-        this.scheduleDomWork();
+        this.scheduleMessageLayoutRefresh(number);
         await wait(80);
       }
 
@@ -737,6 +735,22 @@ function rodateApp() {
       return release.searchText || buildReleaseSearchText(release, this.locale);
     },
 
+    hasDevForumMessageSurface(release) {
+      return Boolean(release?.quote || release?.topicId || release?.forumUrl);
+    },
+
+    hasFullDevForumMessage(release) {
+      return releaseHasFullQuote(release);
+    },
+
+    devForumMessageIsLoading(release) {
+      if (!release?.topicId || releaseHasFullQuote(release)) return false;
+      return (
+        release.quoteStatus !== "failed" ||
+        (this.quoteRetryAfter[release.number] || 0) > Date.now()
+      );
+    },
+
     onSearchChange() {
       writeStoredSearch(this.searchQuery);
       if (
@@ -781,6 +795,26 @@ function rodateApp() {
       return this.orderedReleases().length;
     },
 
+    hasSearchQuery() {
+      return this.searchTerms().length > 0;
+    },
+
+    historyShowsLoadingEmptyState() {
+      return (
+        this.currentReleaseCount() === 0 &&
+        !this.fatalError &&
+        !this.historyShowsSearchEmptyState()
+      );
+    },
+
+    historyShowsSearchEmptyState() {
+      return (
+        this.currentReleaseCount() === 0 &&
+        this.hasSearchQuery() &&
+        this.discoveredReleaseCount() > 0
+      );
+    },
+
     discoveredReleaseCount() {
       return this.releaseOrder.length;
     },
@@ -790,13 +824,17 @@ function rodateApp() {
     },
 
     initTimeframe() {
-      this.timeframeMode = "year";
+      const stored = readStoredTimeframe();
+      this.timeframeMode = TIMEFRAMES.some((item) => item.id === stored)
+        ? stored
+        : "year";
     },
 
     setTimeframe(mode) {
       if (!TIMEFRAMES.some((item) => item.id === mode)) return;
       if (this.timeframeDisabled(mode)) return;
       this.timeframeMode = mode;
+      writeStoredTimeframe(mode);
       this.timeframeOpen = false;
       if (
         this.expandedReleaseNumber &&
@@ -847,9 +885,37 @@ function rodateApp() {
       ).length;
     },
 
+    timeframeReleaseCountLabel(mode) {
+      const count = this.timeframeReleaseCount(mode);
+      return `${count}${this.timeframeCountIsPartial(mode) ? "+" : ""}`;
+    },
+
+    timeframeCountIsPartial(mode) {
+      if (!TIMEFRAMES.some((item) => item.id === mode)) return false;
+      if (this.source.forumIndexComplete) return false;
+      if (mode === "all") return true;
+
+      const coverageStart = this.timeframeCoverageStartDate();
+      return !coverageStart || coverageStart > this.timeframeStartDate(mode);
+    },
+
+    timeframeCoverageStartDate() {
+      let oldest = null;
+
+      for (const release of this.allReleases()) {
+        if (!release.createdAt) continue;
+        const date = new Date(release.createdAt);
+        if (Number.isNaN(date.getTime())) continue;
+        if (!oldest || date < oldest) {
+          oldest = date;
+        }
+      }
+
+      return oldest;
+    },
+
     timeframeDisabled(mode) {
-      if (mode === this.timeframeMode) return false;
-      return this.timeframeReleaseCount(mode) === 0;
+      return !TIMEFRAMES.some((item) => item.id === mode);
     },
 
     timeframeStartDate(mode = this.timeframeMode) {
@@ -1078,6 +1144,7 @@ function rodateApp() {
         const improvements = items.filter((row) => row.type === "Improvements");
         const liveRows = items.filter((row) => isLive(row.status)).length;
         const pendingRows = items.filter((row) => isPending(row.status)).length;
+        const cachedQuote = restoreCachedQuote(cached);
         const release = {
           ...emptyRelease(number),
           ...cached,
@@ -1087,13 +1154,10 @@ function rodateApp() {
             : cached.detailStatus === "loaded"
               ? "idle"
               : cached.detailStatus || "idle",
-          quoteStatus:
-            cached.quoteStatus === "loaded" && looksLikeExcerpt(cached.quote)
-              ? "excerpt"
-              : cached.quoteStatus || "idle",
+          quoteStatus: cachedQuote.status,
           isRefreshing: false,
           refreshError: "",
-          quote: cached.quote || "",
+          quote: cachedQuote.quote,
           items,
           fixes,
           improvements,
@@ -1150,6 +1214,7 @@ function rodateApp() {
 
     saveCache() {
       let cachedDetailReleases = 0;
+      let cachedQuoteReleases = 0;
       const releases = this.allReleases()
         .filter(
           (release) =>
@@ -1165,6 +1230,13 @@ function rodateApp() {
           if (shouldCacheDetails) {
             cachedDetailReleases += 1;
           }
+          const cachedQuote = cacheableQuoteForRelease(
+            release,
+            cachedQuoteReleases < MAX_CACHED_QUOTE_RELEASES,
+          );
+          if (cachedQuote.status === "loaded") {
+            cachedQuoteReleases += 1;
+          }
 
           return {
             number: release.number,
@@ -1173,14 +1245,8 @@ function rodateApp() {
             topicId: release.topicId,
             topicSlug: release.topicSlug,
             forumUrl: release.forumUrl,
-            quote:
-              release.quoteStatus === "excerpt" && looksLikeExcerpt(release.quote)
-                ? release.quote
-                : "",
-            quoteStatus:
-              release.quoteStatus === "excerpt" && looksLikeExcerpt(release.quote)
-                ? "excerpt"
-                : "idle",
+            quote: cachedQuote.quote,
+            quoteStatus: cachedQuote.status,
             detailStatus: shouldCacheDetails ? "loaded" : "idle",
             items: shouldCacheDetails ? release.items.map(compactCachedRow) : [],
           };
@@ -1206,6 +1272,7 @@ function rodateApp() {
           ...snapshot,
           releases: releases.map((release) => ({
             ...release,
+            ...cacheableFallbackQuote(release),
             detailStatus: "idle",
             items: [],
           })),
@@ -1552,6 +1619,38 @@ function rodateApp() {
       });
     },
 
+    scheduleMessageLayoutRefresh(number) {
+      this.scheduleDomWork();
+      window.setTimeout(() => {
+        const release = this.getRelease(number);
+        if (release && this.releaseIsExpanded(number)) {
+          this.scheduleDomWork();
+        }
+      }, 260);
+      window.setTimeout(() => {
+        const release = this.getRelease(number);
+        if (release && this.releaseIsExpanded(number)) {
+          this.scheduleDomWork();
+        }
+      }, 520);
+    },
+
+    scheduleQuoteRetry(number) {
+      window.setTimeout(() => {
+        const release = this.getRelease(number);
+        if (
+          release &&
+          this.releaseIsExpanded(number) &&
+          this.tableIsOpen(number, "devforum")
+        ) {
+          this.ensureQuote(release, {
+            forceRetry: true,
+          });
+          this.scheduleDomWork();
+        }
+      }, QUOTE_RETRY_DELAY_MS + 120);
+    },
+
     measureVisibleCards() {
       let changed = false;
 
@@ -1573,7 +1672,9 @@ function rodateApp() {
         }
 
         if (this.releaseIsExpanded(release.number)) {
-          this.ensureQuote(release);
+          this.ensureQuote(release, {
+            forceRetry: this.tableIsOpen(release.number, "devforum"),
+          });
         }
       }
 
@@ -2016,6 +2117,7 @@ function rodateApp() {
       if (index < 0) {
         if (this.getRelease(number) && this.timeframeMode !== "all") {
           this.timeframeMode = "all";
+          writeStoredTimeframe("all");
           this.timeframeOpen = false;
           this.enqueueAllKnownReleaseDetails(false);
           this.computeVirtualSoon();
@@ -2219,10 +2321,17 @@ function rodateApp() {
 
     toggleTable(number, type) {
       const key = this.tableKey(number, type);
+      const willOpen = !this.tableIsOpen(number, type);
       this.tableOpen = {
         ...this.tableOpen,
-        [key]: !this.tableIsOpen(number, type),
+        [key]: willOpen,
       };
+      if (type === "devforum" && willOpen) {
+        this.ensureQuote(this.getRelease(number), {
+          forceRetry: true,
+          priority: true,
+        });
+      }
       this.scheduleDomWork();
     },
   };
@@ -2292,6 +2401,47 @@ function hydrateCachedRows(rows, releaseNumber) {
   });
 }
 
+function restoreCachedQuote(cached) {
+  const quote = String(cached?.quote || "");
+  if (!quote) return { quote: "", status: "idle" };
+  if (releaseHasFullQuote(cached)) {
+    return { quote, status: "loaded" };
+  }
+  return { quote, status: "excerpt" };
+}
+
+function cacheableQuoteForRelease(release, canCacheFullQuote) {
+  const quote = String(release?.quote || "");
+  if (!quote) return { quote: "", status: "idle" };
+
+  if (looksLikeExcerpt(quote)) {
+    return { quote, status: "excerpt" };
+  }
+
+  if (releaseHasFullQuote(release) && canCacheFullQuote) {
+    return { quote, status: "loaded" };
+  }
+
+  return { quote: "", status: "idle" };
+}
+
+function cacheableFallbackQuote(release) {
+  const quote = String(release?.quote || "");
+  if (quote && looksLikeExcerpt(quote)) {
+    return { quote, quoteStatus: "excerpt" };
+  }
+  return { quote: "", quoteStatus: "idle" };
+}
+
+function releaseHasFullQuote(release) {
+  const quote = String(release?.quote || "");
+  return Boolean(
+    quote &&
+      release?.quoteStatus === "loaded" &&
+      !looksLikeExcerpt(quote),
+  );
+}
+
 function truncateCacheText(value) {
   const text = normalizeWhitespace(value);
   if (text.length <= MAX_CACHED_ROW_TEXT) return text;
@@ -2301,6 +2451,43 @@ function truncateCacheText(value) {
 function parseReleaseNumber(title) {
   const match = String(title || "").match(/Release Notes for\s+(\d+)/i);
   return match ? Number(match[1]) : null;
+}
+
+function parseCreatorHubCurrentReleaseNumber(nextData) {
+  const navigationContent =
+    nextData?.props?.pageProps?.navigation?.navigationContent;
+  const stack = Array.isArray(navigationContent) ? [...navigationContent] : [];
+  const releaseNumbers = [];
+
+  while (stack.length > 0) {
+    const item = stack.shift();
+    if (!item || typeof item !== "object") continue;
+
+    const pathMatch = String(item.path || "").match(
+      /\/release-notes\/release-notes-(\d+)$/i,
+    );
+    if (pathMatch) {
+      releaseNumbers.push(Number(pathMatch[1]));
+    }
+
+    const titleNumber = parseReleaseNumber(item.title);
+    if (titleNumber) {
+      releaseNumbers.push(titleNumber);
+    }
+
+    if (/^Current release$/i.test(String(item.title || ""))) {
+      if (pathMatch) return Number(pathMatch[1]);
+    }
+
+    if (Array.isArray(item.navigation)) {
+      stack.push(...item.navigation);
+    }
+    if (Array.isArray(item.section)) {
+      stack.push(...item.section);
+    }
+  }
+
+  return releaseNumbers.length ? Math.max(...releaseNumbers) : null;
 }
 
 async function fetchJson(url) {
@@ -2322,11 +2509,9 @@ async function fetchText(url) {
 
 async function fetchParsed(url, accept, parse) {
   const sourceHost = new URL(url).hostname;
-  const attempts = [];
-
-  if (!networkState.proxyHosts[sourceHost]) {
-    attempts.push({ url, proxy: false });
-  }
+  const attempts = CORS_LOCKED_HOSTS.has(sourceHost)
+    ? []
+    : [{ url, proxy: false }];
 
   for (const proxy of READ_THROUGH_PROXIES) {
     attempts.push({ url: proxy.url(url), proxy: true, proxyName: proxy.name });
@@ -2355,7 +2540,6 @@ async function fetchParsed(url, accept, parse) {
       const parsed = parse(text);
 
       if (attempt.proxy) {
-        networkState.proxyHosts[sourceHost] = true;
         networkState.proxyUsed = true;
         networkState.proxyName = attempt.proxyName || networkState.proxyName;
       }
@@ -2365,12 +2549,6 @@ async function fetchParsed(url, accept, parse) {
       lastError = error;
       if (error.name === "AbortError") {
         lastError = new Error(`${new URL(attempt.url).hostname} timed out`);
-      }
-      if (
-        !attempt.proxy &&
-        /Failed to fetch|NetworkError|Load failed/i.test(error.message)
-      ) {
-        networkState.proxyHosts[sourceHost] = true;
       }
     } finally {
       window.clearTimeout(timer);
@@ -2412,6 +2590,22 @@ function writeStoredSearch(value) {
     }
   } catch (_error) {
     // Search still works for the current session if storage is unavailable.
+  }
+}
+
+function readStoredTimeframe() {
+  try {
+    return localStorage.getItem(TIMEFRAME_KEY) || "";
+  } catch (_error) {
+    return "";
+  }
+}
+
+function writeStoredTimeframe(value) {
+  try {
+    localStorage.setItem(TIMEFRAME_KEY, String(value || "year"));
+  } catch (_error) {
+    // Timeframe selection still works for the current session if storage fails.
   }
 }
 

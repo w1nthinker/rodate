@@ -51,7 +51,6 @@
     />
     <title>rodate - Roblox release note tracker</title>
 
-    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <link rel="canonical" href="./" />
     <link rel="preload" as="image" href="social-card.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://cdn.jsdelivr.net" />
@@ -88,7 +87,7 @@
     <link rel="stylesheet" href="styles.css?v=20260602z" />
 
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-    <script defer src="app.js?v=20260602z"></script>
+    <script defer src="app.js?v=20260607i"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   </head>
 
@@ -126,7 +125,11 @@
         </div>
       </div>
 
-      <label class="top-search" aria-label="Search releases">
+      <label
+        class="top-search"
+        :class="{ 'has-search-query': searchQuery.length > 0 }"
+        aria-label="Search releases"
+      >
         <i class="ph-bold ph-magnifying-glass" aria-hidden="true"></i>
         <input
           type="search"
@@ -140,13 +143,13 @@
         <button
           type="button"
           class="search-clear"
-          x-show="searchQuery"
-          x-transition:enter="td-panel-enter"
-          x-transition:enter-start="td-panel-enter-start"
-          x-transition:enter-end="td-panel-enter-end"
-          x-transition:leave="td-panel-leave"
-          x-transition:leave-start="td-panel-leave-start"
-          x-transition:leave-end="td-panel-leave-end"
+          x-show="searchQuery.length > 0"
+          x-transition:enter="search-clear-enter"
+          x-transition:enter-start="search-clear-enter-start"
+          x-transition:enter-end="search-clear-enter-end"
+          x-transition:leave="search-clear-leave"
+          x-transition:leave-start="search-clear-leave-start"
+          x-transition:leave-end="search-clear-leave-end"
           @click="clearSearch()"
           title="Clear search"
           aria-label="Clear search"
@@ -245,10 +248,17 @@
           tabindex="0"
           aria-label="Scrollable virtualized release history"
         >
-          <template x-if="currentReleaseCount() === 0 && !fatalError">
+          <template x-if="historyShowsLoadingEmptyState()">
             <div class="empty-state">
               <div class="loading loading-spinner loading-md" aria-hidden="true"></div>
               <p>Reading release index</p>
+            </div>
+          </template>
+
+          <template x-if="historyShowsSearchEmptyState()">
+            <div class="empty-state empty-state-warning">
+              <i class="ph-bold ph-warning-circle" aria-hidden="true"></i>
+              <p>Oops, nothing found.</p>
             </div>
           </template>
 
@@ -378,7 +388,7 @@
                   x-transition:leave-start="td-panel-leave-start"
                   x-transition:leave-end="td-panel-leave-end"
                 >
-                  <template x-if="release.quote">
+                  <template x-if="hasDevForumMessageSurface(release)">
                     <section class="release-message">
                       <div class="message-title">
                         <button
@@ -402,21 +412,30 @@
                           title="Open full DevForum post"
                           aria-label="Open full DevForum post"
                         >
-                          <strong x-text="release.quoteStatus === 'excerpt' ? 'excerpt' : 'full post'"></strong>
+                          <strong>Full post</strong>
                           <i class="ph-bold ph-arrow-square-out" aria-hidden="true"></i>
                         </button>
                       </div>
                       <div
-                        class="message-scroll"
+                        class="message-body"
                         x-show="tableIsOpen(release.number, 'devforum')"
-                        x-transition:enter="td-table-enter"
-                        x-transition:enter-start="td-table-enter-start"
-                        x-transition:enter-end="td-table-enter-end"
-                        x-transition:leave="td-table-leave"
-                        x-transition:leave-start="td-table-leave-start"
-                        x-transition:leave-end="td-table-leave-end"
-                        x-html="release.quote"
-                      ></div>
+                      >
+                        <template x-if="hasFullDevForumMessage(release)">
+                          <div class="message-content" x-html="release.quote"></div>
+                        </template>
+                        <template x-if="devForumMessageIsLoading(release)">
+                          <div class="message-loading">
+                            <div class="message-skeleton" aria-live="polite">
+                              <span class="skeleton-line skeleton-long"></span>
+                              <span class="skeleton-line"></span>
+                              <span class="skeleton-line skeleton-short"></span>
+                            </div>
+                          </div>
+                        </template>
+                        <template x-if="!hasFullDevForumMessage(release) && !devForumMessageIsLoading(release)">
+                          <p class="message-empty">DevForum message unavailable.</p>
+                        </template>
+                      </div>
                     </section>
                   </template>
 
@@ -738,7 +757,7 @@
               :aria-checked="timeframeMode === item.id"
             >
               <span x-text="item.label"></span>
-              <small x-text="timeframeReleaseCount(item.id)"></small>
+              <small x-text="timeframeReleaseCountLabel(item.id)"></small>
               <i
                 class="ph-bold ph-check"
                 x-show="timeframeMode === item.id"
