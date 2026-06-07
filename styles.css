@@ -611,6 +611,14 @@ kbd {
   box-shadow: 0 0 0 3px rgba(149, 100, 0, 0.08);
 }
 
+.search-hit {
+  border-radius: 3px;
+  padding: 0 0.12em;
+  background: color-mix(in srgb, var(--yellow-bg) 78%, transparent);
+  color: var(--yellow-ink);
+  font-weight: inherit;
+}
+
 .release-topline {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 34px auto;

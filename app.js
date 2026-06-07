@@ -801,6 +801,18 @@ function rodateApp() {
       return release.searchText || buildReleaseSearchText(release, this.locale);
     },
 
+    searchHighlightTerms() {
+      return uniqueSearchTerms(this.searchTerms());
+    },
+
+    highlightText(value) {
+      return highlightPlainText(value, this.searchHighlightTerms());
+    },
+
+    highlightHtml(value) {
+      return highlightHtmlText(value, this.searchHighlightTerms());
+    },
+
     hasDevForumMessageSurface(release) {
       return Boolean(release);
     },
@@ -2763,6 +2775,82 @@ function normalizeSearchText(value) {
     .toLowerCase()
       .replace(/[_/.,:;()[\]{}'"`-]+/g, " "),
   );
+}
+
+function uniqueSearchTerms(terms) {
+  const seen = new Set();
+  return terms.filter((term) => {
+    const normalized = normalizeWhitespace(term).toLowerCase();
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function highlightPlainText(value, terms) {
+  const text = String(value || "");
+  if (!text || !terms.length) return escapeHtml(text);
+
+  const pattern = terms
+    .slice()
+    .sort((left, right) => right.length - left.length)
+    .map(escapeRegExp)
+    .join("|");
+  if (!pattern) return escapeHtml(text);
+
+  const matcher = new RegExp(pattern, "gi");
+  let html = "";
+  let lastIndex = 0;
+  let match;
+
+  while ((match = matcher.exec(text)) !== null) {
+    html += escapeHtml(text.slice(lastIndex, match.index));
+    html += `<mark class="search-hit">${escapeHtml(match[0])}</mark>`;
+    lastIndex = match.index + match[0].length;
+  }
+
+  html += escapeHtml(text.slice(lastIndex));
+  return html;
+}
+
+function highlightHtmlText(value, terms) {
+  const html = String(value || "");
+  if (!html || !terms.length) return html;
+
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  highlightTextNodes(template.content, terms);
+  return template.innerHTML;
+}
+
+function highlightTextNodes(root, terms) {
+  for (const node of Array.from(root.childNodes)) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const highlighted = highlightPlainText(node.nodeValue, terms);
+      if (highlighted === escapeHtml(node.nodeValue)) continue;
+      const span = document.createElement("span");
+      span.innerHTML = highlighted;
+      node.replaceWith(...Array.from(span.childNodes));
+      continue;
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE) continue;
+    if (["MARK", "SCRIPT", "STYLE", "NOSCRIPT"].includes(node.tagName)) continue;
+    highlightTextNodes(node, terms);
+  }
 }
 
 function stripHtmlText(value) {

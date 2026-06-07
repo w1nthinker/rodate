@@ -277,9 +277,9 @@
                   class="release-summary-button"
                 >
                   <span class="release-summary-copy">
-                    <span class="release-kicker" x-text="dateLine(release)"></span>
+                    <span class="release-kicker" x-html="highlightText(dateLine(release))"></span>
                     <span class="release-title-row">
-                      <span class="release-heading" x-text="`Release ${release.number}`"></span>
+                      <span class="release-heading" x-html="highlightText(`Release ${release.number}`)"></span>
                       <i
                         class="ph-bold"
                         :class="releaseIsExpanded(release.number) ? 'ph-caret-up' : 'ph-caret-down'"
@@ -358,9 +358,9 @@
                   <span
                     class="status-badge"
                     :class="releaseStatusClass(release)"
-                    x-text="releaseStatusLabel(release)"
+                    x-html="highlightText(releaseStatusLabel(release))"
                   ></span>
-                  <span class="count-badge" x-text="releaseRowLabel(release)"></span>
+                  <span class="count-badge" x-html="highlightText(releaseRowLabel(release))"></span>
                 </div>
               </div>
 
@@ -407,7 +407,7 @@
                         x-show="tableIsOpen(release.number, 'devforum')"
                       >
                         <template x-if="hasFullDevForumMessage(release)">
-                          <div class="message-content" x-html="release.quote"></div>
+                          <div class="message-content" x-html="highlightHtml(release.quote)"></div>
                         </template>
                         <template x-if="devForumMessageIsLoading(release)">
                           <div class="message-loading">
@@ -551,10 +551,10 @@
                                       <span
                                         class="status-badge"
                                         :class="statusClass(row.status)"
-                                        x-text="row.status"
+                                        x-html="highlightText(row.status)"
                                       ></span>
                                     </td>
-                                    <td x-text="row.text"></td>
+                                    <td x-html="highlightText(row.text)"></td>
                                   </tr>
                                 </template>
                                 <template x-if="release.fixes.length === 0">
@@ -608,10 +608,10 @@
                                       <span
                                         class="status-badge"
                                         :class="statusClass(row.status)"
-                                        x-text="row.status"
+                                        x-html="highlightText(row.status)"
                                       ></span>
                                     </td>
-                                    <td x-text="row.text"></td>
+                                    <td x-html="highlightText(row.text)"></td>
                                   </tr>
                                 </template>
                                 <template x-if="release.improvements.length === 0">
